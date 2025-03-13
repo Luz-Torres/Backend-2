@@ -1,92 +1,118 @@
-import passport from 'passport';
-import {Strategy as JwtStrategy, ExtractJwt} from 'passport-jwt';
-import {Strategy as LocalStrategy }from 'passport-local';
-import {SECRET} from "../utils/jwt.utils.js";
+import passport from "passport";
+import local from "passport-local";
+import GitHubStrategy from "passport-github2";
+import jwt from "passport-jwt";
+import userModel from "../dao/models/user.model.js";
+import CartManager from "../dao/db/cartManagerDb.js";
+import { createHash, isValidPassword } from "../utils/hashbcrypt.js";
 
-import {userModel} from '../models/user.model.js';
-import {comparePassword} from '../utils/password.utils.js';
-import { createToken } from "../utils/jwt.utils.js"; 
+const LocalStrategy = local.Strategy;
+const JWTStrategy = jwt.Strategy;
+const ExtractJwt = jwt.ExtractJwt;
+const cartManager = new CartManager();
 
-export function initializePassport() {
+const initializePassport = () => {
     passport.use("register", new LocalStrategy({
         passReqToCallback: true,
-        usernameField: "email",
-    }, async (req, email, password, done) => {
+        usernameField: "email"
+    }, async (req, username, password, done) => {
+        const { first_name, last_name, email, cart_id, age } = req.body;
+
         try {
-            const { firstName, lastName, age, role } = req.body;
-            if (!firstName || !lastName || !age) {
-                return done(null, false, { message: "Missing fields" });
+            let user = await userModel.findOne({ email: email });
+            if (user) return done(null, false);
+            const cart = await cartManager.createCart();
+            let newUser = {
+                first_name,
+                last_name,
+                email,
+                cartId: cart._id,
+                age,
+                password: createHash(password)
             }
 
-            const user = await userModel.create({
-                first_name: firstName,
-                last_name: lastName,
-                email,
-                age,
-                password,
-                role,
-            });
+            let result = await userModel.create(newUser);
 
-            const token = createToken({ id: user.id, email: user.email, role: user.role });
+            return done(null, result);
 
-            req.token = token;
-
-            return done(null, user);
         } catch (error) {
             return done(error);
         }
-    }));
+    }))
 
     passport.use("login", new LocalStrategy({
-        usernameField: "email",
-        passReqToCallback: true,
-    }, async (req, email, password, done) => {
+        usernameField: "email"
+    }, async (email, password, done) => {
         try {
-            const user = await userModel.findOne({ email });
-            if (!user) return done(null, false, { message: "User not found" });
+            const user = await userModel.findOne({ email: email });
+            if (!user) {
+                return done(null, false);
+            }
 
-            const isValidPassword = await comparePassword(password, user.password);
-            if (!isValidPassword) return done(null, false, { message: "Invalid password" });
-
-            const token = createToken({ id: user.id, email: user.email, role: user.role });
-            req.token = token;
-
+            if (!isValidPassword(password, user)) return done(null, false);
             return done(null, user);
         } catch (error) {
             return done(error);
         }
-    }));
-
-    passport.use("jwt", new JWTStrategy({
-        secretOrKey: SECRET,
-        jwtFromRequest: ExtractJwt.fromExtractors([cookieExtractor]),
-    }, async (payload, done) => {
-        try {
-            const user = await userModel.findById(payload.id);
-            if (!user) return done(null, false);
-
-            return done(null, user);
-        } catch (error) {
-            return done(error);
-        }
-    }));
+    }))
 
     passport.serializeUser((user, done) => {
-        done(null, user.id);
-    });
+        done(null, user._id);
+    })
 
     passport.deserializeUser(async (id, done) => {
-        try {
-            const user = await userModel.findById(id);
-            if (!user) return done(null, false);
+        let user = await userModel.findById({ _id: id });
+        done(null, user);
+    })
 
-            return done(null, user);
+    passport.use("github", new GitHubStrategy({
+        clientID: "Iv23liqq6Jnjs1VIxZKS",
+        clientSecret: "641633557d0e95d4a3bd0328100a91859af97150",
+        callbackURL: "http://localhost:8080/api/sessions/githubcallback"
+    }, async (accessToken, refreshToken, profile, done) => {
+        try {
+            let user = await userModel.findOne({ email: profile._json.email });
+            if (!user) {
+                const cart = await cartManager.createCart();
+                let newUser = {
+                    first_name: profile._json.name,
+                    last_name: " ",
+                    age: 18,
+                    email: profile._json.email,
+                    cartId: cart._id,
+                    password: " "
+                }
+                let result = await userModel.create(newUser);
+                done(null, result);
+            } else {
+                done(null, user);
+            }
         } catch (error) {
             return done(error);
         }
-    });
+    }))
+
+    const cookieExtractor = req => {
+        let token = null; 
+        
+        if(req && req.cookies) {
+            token = req.cookies["tokenCookie"];
+            
+        }
+        return token;
+    }
+    
+    passport.use("jwt", new JWTStrategy({
+        jwtFromRequest: ExtractJwt.fromExtractors([cookieExtractor]),
+        secretOrKey: "backendDos"
+        
+    }, async (jwt_payload, done) => {
+        try {
+            return done(null, jwt_payload);
+        } catch (error) {
+            return done(error)
+        }
+    }))
 }
 
-function cookieExtractor(req) {
-    return req && req.cookies ? req.cookies.token : null;
-}
+export default initializePassport;
