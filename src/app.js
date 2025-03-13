@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config({ path: `.env.${process.env.NODE_ENV}` });
+
 import express from 'express';
 import displayRoutes from 'express-routemap';
 import { engine } from 'express-handlebars';
@@ -14,11 +17,11 @@ import initializePassport from './config/passport.config.js';
 import configObject from './config/config.js';
 import passport from 'passport';
 import cors from 'cors';
-import './database.js'
+import mongoose from 'mongoose';
+import './database.js';
 
 const app = express();
-const fileStore = FileStore(session);
-const { PORT, MONGO_URL } = configObject
+const { PORT, MONGO_URL } = configObject;
 
 // Middleware //
 app.use(express.json());
@@ -30,12 +33,11 @@ app.use(session({
     resave: true,
     saveUninitialized: true,
     store: MongoStore.create({
-        //mongodb+srv://admin:1234@cluster0.bas52.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
-        mongoUrl:"mongodb://localhost:27017/backend"
+        mongoUrl: MONGO_URL
     })
 }));
-app.use(passport.initialize()); 
-initializePassport(); 
+app.use(passport.initialize());
+initializePassport();
 app.use(passport.session());
 app.use(cors());
 
@@ -48,10 +50,20 @@ app.set('views', './src/views');
 app.use('/', productsRouter);
 app.use('/', cartsRouter);
 app.use('/', viewsRouter);
-app.use ('/api/sessions/', sessionsRouter);
+app.use('/api/sessions/', sessionsRouter);
+
+// Conexión a MongoDB //
+mongoose.connect(MONGO_URL, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+}).then(() => {
+    console.log('Conectado a MongoDB');
+}).catch((error) => {
+    console.error('Error al conectar a MongoDB', error);
+});
 
 // Servidor //
 const httpServer = app.listen(PORT, () => {
-    displayRoutes(app)
+    displayRoutes(app);
     console.log(`Servidor escuchando en http://localhost:${PORT}`);
 });
